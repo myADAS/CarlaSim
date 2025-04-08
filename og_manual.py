@@ -1445,6 +1445,8 @@ class CameraManager(object):
         self.csv_file = None
         self.csv_writer = None
         self.frame_count = 0
+        self.recording_fps = 30  # Default FPS
+        self.last_frame_time = 0
         self.minimap_sensor = None
         self.minimap_surface = None
         self.minimap_size = (320, 180)  # 1/4 of 1280x720
@@ -1463,8 +1465,12 @@ class CameraManager(object):
         bound_z = 0.5 + self._parent.bounding_box.extent.z
         Attachment = carla.AttachmentType
 
-        # Create data directory if it doesn't exist
-        self.base_data_dir = Path("data")
+        # Create data directory if specified
+        if hasattr(args, 'data_dir') and args.data_dir:
+            self.base_data_dir = Path(args.data_dir)
+        else:
+            self.base_data_dir = Path("data")
+            
         if not self.base_data_dir.exists():
             self.base_data_dir.mkdir(parents=True)
 
@@ -1714,7 +1720,7 @@ class CameraManager(object):
         if self.recording:
             # Create new data directory with timestamp
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.data_dir = Path("data") / f"session_{timestamp}"
+            self.data_dir = self.base_data_dir / f"session_{timestamp}"
             self.data_dir.mkdir(parents=True, exist_ok=True)
             
             # Create and open CSV file for metadata
@@ -1756,6 +1762,7 @@ class CameraManager(object):
                 self.csv_file = None
                 self.csv_writer = None
                 self.frame_count = 0
+                self.last_frame_time = 0
         
         self.hud.notification('Recording %s' % ('On' if self.recording else 'Off'))
 
@@ -1786,76 +1793,82 @@ class CameraManager(object):
             self.surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
 
         if self.recording and self.data_dir:
-            # Save frame as JPG with 85% quality using OpenCV
-            filename = f"frame_{image.frame:08d}.jpg"
-            image_path = self.data_dir / filename
-            
-            # Convert CARLA image to numpy array for OpenCV
-            array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
-            array = np.reshape(array, (image.height, image.width, 4))
-            array = array[:, :, :3]  # Remove alpha channel
-            
-            # Save using OpenCV with 85% quality
-            cv2.imwrite(str(image_path), array, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            
-            # Get vehicle state
-            vehicle = self._parent
-            world = vehicle.get_world()
-            transform = vehicle.get_transform()
-            velocity = vehicle.get_velocity()
-            angular_velocity = vehicle.get_angular_velocity()
-            acceleration = vehicle.get_acceleration()
-            control = vehicle.get_control()
-            
-            # Get affordance metrics
-            metrics = get_lane_metrics(vehicle, world)
-            
-            # Write metadata to CSV
-            if self.csv_writer:
-                self.frame_count += 1
+            # Check if we should save this frame based on FPS
+            current_time = time.time()
+            if current_time - self.last_frame_time >= 1.0 / self.recording_fps:
+                # Save frame as JPG with 85% quality using OpenCV
+                filename = f"frame_{image.frame:08d}.jpg"
+                image_path = self.data_dir / filename
                 
-                # Get RPM safely
-                try:
-                    rpm = vehicle.get_vehicle_rpm()
-                except:
-                    rpm = 0.0
+                # Convert CARLA image to numpy array for OpenCV
+                array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+                array = np.reshape(array, (image.height, image.width, 4))
+                array = array[:, :, :3]  # Remove alpha channel
+                
+                # Save using OpenCV with 85% quality
+                cv2.imwrite(str(image_path), array, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                
+                # Get vehicle state
+                vehicle = self._parent
+                world = vehicle.get_world()
+                transform = vehicle.get_transform()
+                velocity = vehicle.get_velocity()
+                angular_velocity = vehicle.get_angular_velocity()
+                acceleration = vehicle.get_acceleration()
+                control = vehicle.get_control()
+                
+                # Get affordance metrics
+                metrics = get_lane_metrics(vehicle, world)
+                
+                # Write metadata to CSV
+                if self.csv_writer:
+                    self.frame_count += 1
                     
-                metadata = [
-                    self.frame_count, image.timestamp,
-                    # Vehicle state
-                    transform.location.x, transform.location.y, transform.location.z,
-                    transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll,
-                    velocity.x, velocity.y, velocity.z,
-                    angular_velocity.x, angular_velocity.y, angular_velocity.z,
-                    acceleration.x, acceleration.y, acceleration.z,
-                    control.throttle, control.steer, control.brake, control.hand_brake, control.reverse,
-                    control.gear, rpm, 3.6 * math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2),
-                    # Lane metrics
-                    metrics['angle'],
-                    metrics['dist_to_center'],
-                    metrics['dist_to_left'],
-                    metrics['dist_to_right'],
-                    metrics['dist_to_left_veh'],
-                    metrics['dist_to_right_veh'],
-                    metrics['dist_to_preceding'],
-                    metrics['dist_to_following'],
-                    metrics['dist_to_left_preceding'],
-                    metrics['dist_to_left_following'],
-                    metrics['dist_to_right_preceding'],
-                    metrics['dist_to_right_following'],
-                    metrics['speed'],
-                    # Environment info
-                    world.get_weather(),
-                    world.get_map().name,
-                    self.sensor.get_transform(),
-                    filename
-                ]
+                    # Get RPM safely
+                    try:
+                        rpm = vehicle.get_vehicle_rpm()
+                    except:
+                        rpm = 0.0
+                        
+                    metadata = [
+                        self.frame_count, image.timestamp,
+                        # Vehicle state
+                        transform.location.x, transform.location.y, transform.location.z,
+                        transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll,
+                        velocity.x, velocity.y, velocity.z,
+                        angular_velocity.x, angular_velocity.y, angular_velocity.z,
+                        acceleration.x, acceleration.y, acceleration.z,
+                        control.throttle, control.steer, control.brake, control.hand_brake, control.reverse,
+                        control.gear, rpm, 3.6 * math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2),
+                        # Lane metrics
+                        metrics['angle'],
+                        metrics['dist_to_center'],
+                        metrics['dist_to_left'],
+                        metrics['dist_to_right'],
+                        metrics['dist_to_left_veh'],
+                        metrics['dist_to_right_veh'],
+                        metrics['dist_to_preceding'],
+                        metrics['dist_to_following'],
+                        metrics['dist_to_left_preceding'],
+                        metrics['dist_to_left_following'],
+                        metrics['dist_to_right_preceding'],
+                        metrics['dist_to_right_following'],
+                        metrics['speed'],
+                        # Environment info
+                        world.get_weather(),
+                        world.get_map().name,
+                        self.sensor.get_transform(),
+                        filename
+                    ]
+                    
+                    self.csv_writer.writerow(metadata)
+                    
+                    # Flush periodically to avoid data loss
+                    if self.frame_count % 10 == 0:
+                        self.csv_file.flush()
                 
-                self.csv_writer.writerow(metadata)
-                
-                # Flush periodically to avoid data loss
-                if self.frame_count % 10 == 0:
-                    self.csv_file.flush()
+                # Update last frame time
+                self.last_frame_time = current_time
 
     def destroy_sensors(self):
         try:
@@ -2019,6 +2032,9 @@ def game_loop(args):
         # Set camera to interior view (transform index 1)
         world.camera_manager.transform_index = 1
         world.camera_manager.set_sensor(0, notify=False)
+        
+        # Set recording FPS
+        world.camera_manager.recording_fps = args.recording_fps
 
         # Spawn additional AI vehicles if requested
         if args.vehicles > 0:
@@ -2194,6 +2210,11 @@ def main():
         action='store_true',
         help='Start recording automatically when launching')
     argparser.add_argument(
+        '--recording-fps',
+        type=int,
+        default=30,
+        help='Number of frames to record per second (default: 30)')
+    argparser.add_argument(
         '-t', '--timer',
         type=int,
         default=0,
@@ -2216,6 +2237,10 @@ def main():
         type=float,
         default=85.0,
         help='Map coverage threshold percentage to stop simulation (default: 85.0)')
+    argparser.add_argument(
+        '--data-dir',
+        type=str,
+        help='Directory to store recorded data')
     
     args = argparser.parse_args()
 
