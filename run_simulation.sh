@@ -132,7 +132,6 @@ for map in "${MAPS[@]}"; do
                 --timer-quit \
                 --traverse-map \
                 --coverage "$COVERAGE_THRESHOLD" \
-                --data-dir "$SESSION_DIR" \
                 > "$SESSION_DIR/simulation.log" 2>&1 &
             
             # Store the PID

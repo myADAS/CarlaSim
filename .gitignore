@@ -172,3 +172,16 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+_out
+.venv3.7
+.vscode
+backup_files
+cache
+Compressed
+data
+others 
+output
+revision
+recorded_data
