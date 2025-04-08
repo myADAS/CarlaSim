@@ -1366,10 +1366,6 @@ class CameraManager(object):
         self.map_boundaries = None
         self.traversed_positions = []  # Store traversed positions
         self.trail_surface = None  # Surface for the trail
-        self.grid_size = 5.0  # 5-meter grid cells
-        self.visited_cells = set()  # Set to store visited grid cells
-        self.total_road_cells = 0  # Total number of road cells
-        self.coverage = 0.0  # Current coverage percentage
         
         # Initialize the map overlay
         self._init_map_overlay()
@@ -1482,86 +1478,81 @@ class CameraManager(object):
             'max_y': max_y + padding
         }
         
-        # Initialize grid for coverage tracking
-        self.grid_width = int((max_x - min_x) / self.grid_size) + 1
-        self.grid_height = int((max_y - min_y) / self.grid_size) + 1
-        
-        # Mark road cells in the grid
-        for wp in self.map_waypoints:
-            grid_x, grid_y = self._world_to_grid_coords(wp.transform.location)
-            # Mark cells around the waypoint to account for road width
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    self.total_road_cells += 1
-        
-        # Create surfaces with alpha channel
+        # Create the base map surface with alpha channel
         self.map_surface = pygame.Surface(self.map_overlay_size, pygame.SRCALPHA)
+        self.map_surface.fill((0, 0, 0, 0))  # Fully transparent background
+        
+        # Create trail surface with alpha channel
         self.trail_surface = pygame.Surface(self.map_overlay_size, pygame.SRCALPHA)
-        self.map_surface.fill((0, 0, 0, 0))
-        self.trail_surface.fill((0, 0, 0, 0))
+        self.trail_surface.fill((0, 0, 0, 0))  # Fully transparent background
         
         self._draw_base_map()
 
-    def _world_to_grid_coords(self, location):
-        """Convert world coordinates to grid coordinates."""
-        grid_x = int((location.x - self.map_boundaries['min_x']) / self.grid_size)
-        grid_y = int((location.y - self.map_boundaries['min_y']) / self.grid_size)
-        return grid_x, grid_y
-
-    def _update_coverage(self, location):
-        """Update coverage based on current vehicle position."""
-        grid_x, grid_y = self._world_to_grid_coords(location)
-        
-        # Mark cells around current position as visited
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                cell = (grid_x + dx, grid_y + dy)
-                if cell not in self.visited_cells:
-                    self.visited_cells.add(cell)
-                    
-        # Update coverage percentage
-        if self.total_road_cells > 0:
-            self.coverage = len(self.visited_cells) / self.total_road_cells * 100
+    def _draw_base_map(self):
+        """Draw the base map with all roads."""
+        if not self.map_waypoints or not self.map_boundaries:
+            return
             
-        # Log coverage
-        print(f"Map coverage: {self.coverage:.2f}%")
+        # Clear the surface with full transparency
+        self.map_surface.fill((0, 0, 0, 0))
+        
+        # Draw roads with thicker lines and better colors
+        for wp in self.map_waypoints:
+            # Convert world coordinates to map overlay coordinates
+            x, y = self._world_to_map_coords(wp.transform.location)
+            
+            # Draw road point with larger radius
+            pygame.draw.circle(self.map_surface, (80, 80, 80, 153), (int(x), int(y)), 3)
+            
+            # Draw lane connections with thicker lines
+            next_wps = wp.next(2.0)
+            for next_wp in next_wps:
+                next_x, next_y = self._world_to_map_coords(next_wp.transform.location)
+                # Draw thick gray line for road
+                pygame.draw.line(self.map_surface, (120, 120, 120, 153), 
+                               (int(x), int(y)), 
+                               (int(next_x), int(next_y)), 5)
+                
+                # Draw white line for lane markings
+                if wp.lane_id * next_wp.lane_id > 0:  # Same direction lanes
+                    pygame.draw.line(self.map_surface, (200, 200, 200, 153), 
+                                   (int(x), int(y)), 
+                                   (int(next_x), int(next_y)), 2)
+
+    def _world_to_map_coords(self, location):
+        """Convert world coordinates to map overlay coordinates."""
+        x = (location.x - self.map_boundaries['min_x']) / \
+            (self.map_boundaries['max_x'] - self.map_boundaries['min_x']) * self.map_overlay_size[0]
+        y = (location.y - self.map_boundaries['min_y']) / \
+            (self.map_boundaries['max_y'] - self.map_boundaries['min_y']) * self.map_overlay_size[1]
+        return x, self.map_overlay_size[1] - y  # Flip y coordinate for pygame
 
     def _update_map_overlay(self):
-        """Update the map overlay with current vehicle position and coverage."""
+        """Update the map overlay with current vehicle position and other vehicles."""
         if not self.map_surface:
             return
             
-        # Create a copy of the base map
+        # Create a copy of the base map with alpha channel
         current_map = pygame.Surface(self.map_overlay_size, pygame.SRCALPHA)
-        current_map.fill((0, 0, 0, 0))
+        current_map.fill((0, 0, 0, 0))  # Fully transparent background
         current_map.blit(self.map_surface, (0, 0))
         
         # Get vehicle position
         vehicle_location = self._parent.get_location()
         vehicle_x, vehicle_y = self._world_to_map_coords(vehicle_location)
         
-        # Update coverage tracking
-        self._update_coverage(vehicle_location)
-        
         # Add current position to traversed positions
         self.traversed_positions.append((int(vehicle_x), int(vehicle_y)))
-        if len(self.traversed_positions) > 1000:
+        if len(self.traversed_positions) > 1000:  # Limit trail length
             self.traversed_positions.pop(0)
         
-        # Draw coverage trail
+        # Draw trail on trail surface
         if len(self.traversed_positions) > 1:
-            # Draw trail with higher opacity to show coverage
-            pygame.draw.lines(self.trail_surface, (0, 255, 0, 153), False, 
-                            self.traversed_positions, 3)
+            pygame.draw.lines(self.trail_surface, (0, 255, 0, 80), False, 
+                            self.traversed_positions, 2)
         
         # Blend trail with current map
         current_map.blit(self.trail_surface, (0, 0))
-        
-        # Draw coverage percentage
-        font = pygame.font.Font(None, 36)
-        coverage_text = font.render(f"Coverage: {self.coverage:.1f}%", True, (255, 255, 255))
-        text_pos = (10, 10)
-        current_map.blit(coverage_text, text_pos)
         
         # Draw other vehicles
         world = self._parent.get_world()
