@@ -229,9 +229,8 @@ fi
 
 # Install conda if needed
 if [ "$INSTALL_CONDA" = true ]; then
-    # Create Miniconda directory and install Miniconda
+    # Install Miniconda in home directory
     echo_status "info" "Installing conda in your home directory at ~/miniconda3"
-    mkdir -p ~/miniconda3
     
     echo_status "info" "Downloading Miniconda installer..."
     wget --show-progress -O ~/miniconda3/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh &
@@ -249,8 +248,13 @@ if [ "$INSTALL_CONDA" = true ]; then
     ~/miniconda3/bin/conda init bash > /dev/null 2>&1 &
     spinner $! "Initializing conda"
     
-    # Ensure conda is in PATH for this session
+    # Add conda to PATH for this session
     export PATH="$HOME/miniconda3/bin:$PATH"
+    
+    # Add conda to PATH permanently in .bashrc
+    if ! grep -q "export PATH=\"\$HOME/miniconda3/bin:\$PATH\"" ~/.bashrc; then
+        echo 'export PATH="$HOME/miniconda3/bin:$PATH"' >> ~/.bashrc
+    fi
     
     echo_status "success" "Conda installed and initialized successfully."
     echo_status "info" "For future sessions, you may need to run: source ~/.bashrc"
