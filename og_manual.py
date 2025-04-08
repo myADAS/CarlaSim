@@ -1465,12 +1465,8 @@ class CameraManager(object):
         bound_z = 0.5 + self._parent.bounding_box.extent.z
         Attachment = carla.AttachmentType
 
-        # Create data directory if specified
-        if hasattr(args, 'data_dir') and args.data_dir:
-            self.base_data_dir = Path(args.data_dir)
-        else:
-            self.base_data_dir = Path("data")
-            
+        # Create data directory if it doesn't exist
+        self.base_data_dir = Path("data")
         if not self.base_data_dir.exists():
             self.base_data_dir.mkdir(parents=True)
 
@@ -1720,7 +1716,7 @@ class CameraManager(object):
         if self.recording:
             # Create new data directory with timestamp
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.data_dir = self.base_data_dir / f"session_{timestamp}"
+            self.data_dir = Path("data") / f"session_{timestamp}"
             self.data_dir.mkdir(parents=True, exist_ok=True)
             
             # Create and open CSV file for metadata
@@ -2237,10 +2233,6 @@ def main():
         type=float,
         default=85.0,
         help='Map coverage threshold percentage to stop simulation (default: 85.0)')
-    argparser.add_argument(
-        '--data-dir',
-        type=str,
-        help='Directory to store recorded data')
     
     args = argparser.parse_args()
 
