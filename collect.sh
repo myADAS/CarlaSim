@@ -5,7 +5,6 @@ RECORDING_TIME=1800  # 30 minutes in seconds
 HOST="127.0.0.1"
 PORT=2000
 RESOLUTION="1280x720"
-COVERAGE_THRESHOLD=0.95  # 95% coverage threshold
 
 # Arrays of parameters to iterate through
 WEATHER_CONDITIONS=(
@@ -57,7 +56,7 @@ for map in "${MAPS[@]}"; do
             echo "  Recording time: $RECORDING_TIME seconds"
             
             # Run the simulation
-            python3 data_collection.py \
+            python3 og_manual.py \
                 --host "$HOST" \
                 --port "$PORT" \
                 --res "$RESOLUTION" \
@@ -70,27 +69,11 @@ for map in "${MAPS[@]}"; do
                 --timer "$RECORDING_TIME" \
                 --timer-quit \
                 --traverse-map \
-                --coverage-threshold "$COVERAGE_THRESHOLD" \
                 > "$SESSION_DIR/simulation.log" 2>&1
             
             # Check if simulation completed successfully
             if [ $? -eq 0 ]; then
                 echo "Simulation completed successfully"
-                
-                # Check coverage from the log file
-                COVERAGE=$(grep "Map coverage:" "$SESSION_DIR/simulation.log" | tail -n 1 | awk '{print $3}')
-                if [ ! -z "$COVERAGE" ]; then
-                    echo "Final map coverage: ${COVERAGE}%"
-                    
-                    # Check if coverage meets threshold
-                    if (( $(echo "$COVERAGE >= $COVERAGE_THRESHOLD" | bc -l) )); then
-                        echo "Achieved target coverage threshold of ${COVERAGE_THRESHOLD}%"
-                    else
-                        echo "Warning: Coverage below target threshold"
-                    fi
-                else
-                    echo "Warning: No coverage information found in log"
-                fi
             else
                 echo "Simulation encountered an error"
             fi
@@ -101,4 +84,4 @@ for map in "${MAPS[@]}"; do
     done
 done
 
-echo "All simulations completed. Results are in: $RESULTS_DIR" 
+echo "All simulations completed. Results are in: $RESULTS_DIR"
