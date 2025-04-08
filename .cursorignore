@@ -1,0 +1,24 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+recorded_data/
+output/
+*.log
+*.json
+*.csv
+*.txt
+*.py
+*.ipynb
+*.md
+*.yaml
+*.yml
+*.json
+_out/
+.venv/
+.venv3.7/
+.vscode/
+cache/
+.gitignore
+.git/
+.gitmodules
+.gitconfig
+.git-blame-ignore-revs
+*.zip
