@@ -10,6 +10,21 @@ CYAN="\033[0;36m"
 RED="\033[0;31m"
 MAGENTA="\033[0;35m"
 
+# Check if running on Ubuntu
+if [ ! -f /etc/os-release ] || ! grep -q "Ubuntu" /etc/os-release; then
+    echo -e "${RED}${BOLD}ERROR: This script is designed for Ubuntu Linux only.${RESET}"
+    echo -e "${YELLOW}Detected OS: $(cat /etc/os-release 2>/dev/null || echo "Unknown")${RESET}"
+    echo -e "${YELLOW}Please run this script on an Ubuntu system.${RESET}"
+    exit 1
+fi
+
+# Check if running with sudo privileges
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${YELLOW}This script requires sudo privileges for package installation.${RESET}"
+    echo -e "${YELLOW}Please run with sudo or as root.${RESET}"
+    exit 1
+fi
+
 # Get terminal width for progress bars (with fallback)
 TERM_WIDTH=80
 if command -v tput >/dev/null 2>&1; then
@@ -157,6 +172,8 @@ if command -v conda >/dev/null 2>&1 ||
    [ -d "$HOME/miniconda3" ] || 
    [ -d "$HOME/anaconda3" ] || 
    [ -d "$HOME/.conda" ] || 
+   [ -d "$HOME/AppData/Local/Continuum/miniconda3" ] || 
+   [ -d "$HOME/AppData/Local/Continuum/anaconda3" ] || 
    [ -f "$HOME/.bashrc" ] && grep -q "conda initialize" "$HOME/.bashrc"; then
     
     echo_status "success" "Conda is already installed."
@@ -171,6 +188,12 @@ if command -v conda >/dev/null 2>&1 ||
     elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
         echo_status "info" "Initializing conda from /opt/conda"
         source "/opt/conda/etc/profile.d/conda.sh"
+    elif [ -f "$HOME/AppData/Local/Continuum/miniconda3/etc/profile.d/conda.sh" ]; then
+        echo_status "info" "Initializing conda from Windows Miniconda3"
+        source "$HOME/AppData/Local/Continuum/miniconda3/etc/profile.d/conda.sh"
+    elif [ -f "$HOME/AppData/Local/Continuum/anaconda3/etc/profile.d/conda.sh" ]; then
+        echo_status "info" "Initializing conda from Windows Anaconda3"
+        source "$HOME/AppData/Local/Continuum/anaconda3/etc/profile.d/conda.sh"
     else
         echo_status "warning" "Conda installation found but initialization script not found. Searching..."
         CONDA_SH=$(find "$HOME" -name conda.sh 2>/dev/null | head -n 1)
@@ -194,15 +217,24 @@ if command -v conda >/dev/null 2>&1 ||
                     source "$HOME/.bashrc"
                 fi
             else
-                echo_status "error" "Unable to find conda initialization script or executable."
-                echo_status "warning" "Your conda installation might be incomplete or not in PATH."
-                
-                if confirm "Would you like to install Miniconda in your home directory?" "y"; then
-                    # Proceed with fresh installation in home directory
-                    INSTALL_CONDA=true
+                # Additional Windows-specific checks
+                if [ -f "$HOME/AppData/Local/Continuum/miniconda3/Scripts/conda.exe" ]; then
+                    echo_status "info" "Found Windows Miniconda3 executable"
+                    export PATH="$HOME/AppData/Local/Continuum/miniconda3/Scripts:$PATH"
+                elif [ -f "$HOME/AppData/Local/Continuum/anaconda3/Scripts/conda.exe" ]; then
+                    echo_status "info" "Found Windows Anaconda3 executable"
+                    export PATH="$HOME/AppData/Local/Continuum/anaconda3/Scripts:$PATH"
                 else
-                    echo_status "error" "Cannot proceed without working conda. Exiting."
-                    exit 1
+                    echo_status "error" "Unable to find conda initialization script or executable."
+                    echo_status "warning" "Your conda installation might be incomplete or not in PATH."
+                    
+                    if confirm "Would you like to install Miniconda in your home directory?" "y"; then
+                        # Proceed with fresh installation in home directory
+                        INSTALL_CONDA=true
+                    else
+                        echo_status "error" "Cannot proceed without working conda. Exiting."
+                        exit 1
+                    fi
                 fi
             fi
         fi
