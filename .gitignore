@@ -172,6 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+<<<<<<< HEAD
 
 
 _out
@@ -185,3 +186,5 @@ others
 output
 revision
 recorded_data
+=======
+>>>>>>> 8abfdd9 (Initial commit)
