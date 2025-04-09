@@ -10,21 +10,6 @@ CYAN="\033[0;36m"
 RED="\033[0;31m"
 MAGENTA="\033[0;35m"
 
-# Check if running on Ubuntu
-if [ ! -f /etc/os-release ] || ! grep -q "Ubuntu" /etc/os-release; then
-    echo -e "${RED}${BOLD}ERROR: This script is designed for Ubuntu Linux only.${RESET}"
-    echo -e "${YELLOW}Detected OS: $(cat /etc/os-release 2>/dev/null || echo "Unknown")${RESET}"
-    echo -e "${YELLOW}Please run this script on an Ubuntu system.${RESET}"
-    exit 1
-fi
-
-# Check if running with sudo privileges
-if [ "$EUID" -ne 0 ]; then
-    echo -e "${YELLOW}This script requires sudo privileges for package installation.${RESET}"
-    echo -e "${YELLOW}Please run with sudo or as root.${RESET}"
-    exit 1
-fi
-
 # Get terminal width for progress bars (with fallback)
 TERM_WIDTH=80
 if command -v tput >/dev/null 2>&1; then
@@ -127,6 +112,15 @@ divider() {
     echo -e "${BLUE}$(printf '%*s' "$TERM_WIDTH" '' | tr ' ' '=')${RESET}"
 }
 
+# Detect if running as sudo/root and get the real user's home
+REAL_USER=$(logname 2>/dev/null || echo $SUDO_USER || echo $USER)
+REAL_HOME=$(eval echo ~$REAL_USER)
+MINICONDA_PATH="$REAL_HOME/miniconda3"
+
+echo_status "info" "Detected real user: $REAL_USER"
+echo_status "info" "Using home directory: $REAL_HOME"
+echo_status "info" "Miniconda path: $MINICONDA_PATH"
+
 # Print welcome message
 clear
 divider
@@ -164,94 +158,32 @@ sudo apt install -y ./libtiff5_4.3.0-6ubuntu0.10_amd64.deb \
                     ./libtiff5-dev_4.3.0-6ubuntu0.10_amd64.deb > /dev/null 2>&1 &
 spinner $! "Installing libtiff5 packages"
 
-# Check if conda is already installed - IMPROVED VERSION
+# Check if conda is already installed
 echo_status "step" "Checking Conda installation"
 
-# More comprehensive check for existing conda installations
-if command -v conda >/dev/null 2>&1 || 
-   [ -d "$HOME/miniconda3" ] || 
-   [ -d "$HOME/anaconda3" ] || 
-   [ -d "$HOME/.conda" ] || 
-   [ -d "$HOME/AppData/Local/Continuum/miniconda3" ] || 
-   [ -d "$HOME/AppData/Local/Continuum/anaconda3" ] || 
-   [ -f "$HOME/.bashrc" ] && grep -q "conda initialize" "$HOME/.bashrc"; then
+# Check for existing conda installations in user's home directory
+if [ -d "$MINICONDA_PATH" ] || command -v conda >/dev/null 2>&1; then
+    echo_status "success" "Found existing Conda installation."
     
-    echo_status "success" "Conda is already installed."
-    
-    # Try to find and source conda initialization script from multiple locations
-    if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
-        echo_status "info" "Initializing conda from $HOME/miniconda3"
-        source "$HOME/miniconda3/etc/profile.d/conda.sh"
-    elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
-        echo_status "info" "Initializing conda from $HOME/anaconda3"
-        source "$HOME/anaconda3/etc/profile.d/conda.sh"
-    elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
-        echo_status "info" "Initializing conda from /opt/conda"
-        source "/opt/conda/etc/profile.d/conda.sh"
-    elif [ -f "$HOME/AppData/Local/Continuum/miniconda3/etc/profile.d/conda.sh" ]; then
-        echo_status "info" "Initializing conda from Windows Miniconda3"
-        source "$HOME/AppData/Local/Continuum/miniconda3/etc/profile.d/conda.sh"
-    elif [ -f "$HOME/AppData/Local/Continuum/anaconda3/etc/profile.d/conda.sh" ]; then
-        echo_status "info" "Initializing conda from Windows Anaconda3"
-        source "$HOME/AppData/Local/Continuum/anaconda3/etc/profile.d/conda.sh"
-    else
-        echo_status "warning" "Conda installation found but initialization script not found. Searching..."
-        CONDA_SH=$(find "$HOME" -name conda.sh 2>/dev/null | head -n 1)
-        if [ -n "$CONDA_SH" ]; then
-            echo_status "info" "Found conda.sh at $CONDA_SH"
-            source "$CONDA_SH"
-        else
-            # Try to find the conda executable and add its directory to PATH
-            CONDA_BIN=$(find "$HOME" -name conda -type f -executable 2>/dev/null | head -n 1)
-            if [ -n "$CONDA_BIN" ]; then
-                echo_status "info" "Found conda executable at $CONDA_BIN"
-                CONDA_DIR=$(dirname "$CONDA_BIN")
-                echo_status "info" "Adding $CONDA_DIR to PATH"
-                export PATH="$CONDA_DIR:$PATH"
-                
-                # Try to initialize conda with the found executable
-                "$CONDA_BIN" init bash > /dev/null 2>&1
-                
-                # Source the bashrc to get the initialization
-                if [ -f "$HOME/.bashrc" ]; then
-                    source "$HOME/.bashrc"
-                fi
-            else
-                # Additional Windows-specific checks
-                if [ -f "$HOME/AppData/Local/Continuum/miniconda3/Scripts/conda.exe" ]; then
-                    echo_status "info" "Found Windows Miniconda3 executable"
-                    export PATH="$HOME/AppData/Local/Continuum/miniconda3/Scripts:$PATH"
-                elif [ -f "$HOME/AppData/Local/Continuum/anaconda3/Scripts/conda.exe" ]; then
-                    echo_status "info" "Found Windows Anaconda3 executable"
-                    export PATH="$HOME/AppData/Local/Continuum/anaconda3/Scripts:$PATH"
-                else
-                    echo_status "error" "Unable to find conda initialization script or executable."
-                    echo_status "warning" "Your conda installation might be incomplete or not in PATH."
-                    
-                    if confirm "Would you like to install Miniconda in your home directory?" "y"; then
-                        # Proceed with fresh installation in home directory
-                        INSTALL_CONDA=true
-                    else
-                        echo_status "error" "Cannot proceed without working conda. Exiting."
-                        exit 1
-                    fi
-                fi
-            fi
+    # Try to initialize conda
+    if [ -f "$MINICONDA_PATH/etc/profile.d/conda.sh" ]; then
+        echo_status "info" "Initializing conda from $MINICONDA_PATH..."
+        source "$MINICONDA_PATH/etc/profile.d/conda.sh"
+    elif command -v conda >/dev/null 2>&1; then
+        echo_status "info" "Conda is in PATH, trying to initialize..."
+        # Try to find conda.sh
+        CONDA_PREFIX=$(conda info --base 2>/dev/null)
+        if [ -n "$CONDA_PREFIX" ] && [ -f "$CONDA_PREFIX/etc/profile.d/conda.sh" ]; then
+            source "$CONDA_PREFIX/etc/profile.d/conda.sh"
         fi
     fi
     
-    # Verify conda is actually working now
+    # Verify conda is working now
     if ! command -v conda >/dev/null 2>&1; then
-        echo_status "error" "Conda is still not accessible after initialization attempts."
-        
-        if confirm "Would you like to install a fresh copy of Miniconda in your home directory?" "y"; then
-            INSTALL_CONDA=true
-        else
-            echo_status "error" "Cannot proceed without working conda. Exiting."
-            exit 1
-        fi
+        echo_status "error" "Conda found but not accessible. Please check your installation."
+        exit 1
     else
-        echo_status "success" "Conda is now initialized and ready to use."
+        echo_status "success" "Conda initialized and ready to use."
         INSTALL_CONDA=false
     fi
 else
@@ -261,36 +193,77 @@ fi
 
 # Install conda if needed
 if [ "$INSTALL_CONDA" = true ]; then
-    # Install Miniconda in home directory
-    echo_status "info" "Installing conda in your home directory at ~/miniconda3"
+    # Install Miniconda in user's home directory
+    echo_status "info" "Installing Miniconda in $REAL_USER's home directory"
+    
+    # Create miniconda directory first (with appropriate permissions)
+    mkdir -p "$MINICONDA_PATH"
+    if [ "$USER" = "root" ]; then
+        chown $REAL_USER:$REAL_USER "$MINICONDA_PATH"
+    fi
     
     echo_status "info" "Downloading Miniconda installer..."
-    wget --show-progress -O ~/miniconda3/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh &
+    INSTALLER_PATH="$REAL_HOME/miniconda_installer.sh"
+    wget --show-progress -O "$INSTALLER_PATH" https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh &
     spinner $! "Downloading Miniconda installer"
     
+    # Set appropriate permissions for the installer
+    if [ "$USER" = "root" ]; then
+        chown $REAL_USER:$REAL_USER "$INSTALLER_PATH"
+    fi
+    
     echo_status "info" "Installing Miniconda..."
-    bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3 > /dev/null 2>&1 &
+    if [ "$USER" = "root" ]; then
+        # Run as the real user if we're root
+        su - $REAL_USER -c "bash $INSTALLER_PATH -b -u -p $MINICONDA_PATH" > /dev/null 2>&1 &
+    else
+        bash "$INSTALLER_PATH" -b -u -p "$MINICONDA_PATH" > /dev/null 2>&1 &
+    fi
     spinner $! "Installing Miniconda"
     
-    rm ~/miniconda3/miniconda.sh
+    # Clean up installer
+    rm -f "$INSTALLER_PATH"
     
     # Initialize conda
     echo_status "info" "Initializing conda..."
-    source ~/miniconda3/bin/activate
-    ~/miniconda3/bin/conda init bash > /dev/null 2>&1 &
+    if [ "$USER" = "root" ]; then
+        su - $REAL_USER -c "$MINICONDA_PATH/bin/conda init bash" > /dev/null 2>&1 &
+    else
+        "$MINICONDA_PATH/bin/conda" init bash > /dev/null 2>&1 &
+    fi
     spinner $! "Initializing conda"
     
-    # Add conda to PATH for this session
-    export PATH="$HOME/miniconda3/bin:$PATH"
-    
-    # Add conda to PATH permanently in .bashrc
-    if ! grep -q "export PATH=\"\$HOME/miniconda3/bin:\$PATH\"" ~/.bashrc; then
-        echo 'export PATH="$HOME/miniconda3/bin:$PATH"' >> ~/.bashrc
+    # Source conda.sh
+    if [ -f "$MINICONDA_PATH/etc/profile.d/conda.sh" ]; then
+        source "$MINICONDA_PATH/etc/profile.d/conda.sh"
     fi
+    
+    # Add to PATH for this session
+    export PATH="$MINICONDA_PATH/bin:$PATH"
     
     echo_status "success" "Conda installed and initialized successfully."
     echo_status "info" "For future sessions, you may need to run: source ~/.bashrc"
+    
+    # Verify conda is working
+    if ! command -v conda >/dev/null 2>&1; then
+        echo_status "error" "Conda was installed but is not accessible. Try running the script without sudo."
+        exit 1
+    fi
 fi
+
+# Function to run conda commands (as real user if needed)
+run_conda_command() {
+    command=$1
+    message=$2
+    
+    if [ "$USER" = "root" ]; then
+        # Run as the real user if we're root
+        su - $REAL_USER -c "source $MINICONDA_PATH/etc/profile.d/conda.sh && $command" > /dev/null 2>&1 &
+    else
+        eval "$command" > /dev/null 2>&1 &
+    fi
+    spinner $! "$message"
+}
 
 # Check if ADAS environment already exists
 echo_status "step" "Setting up ADAS conda environment"
@@ -300,37 +273,46 @@ if conda env list | grep -q "ADAS"; then
     
     if confirm "Would you like to recreate the ADAS environment? (This will delete the existing one)" "n"; then
         echo_status "warning" "Removing existing ADAS environment..."
-        conda env remove -n ADAS -y > /dev/null 2>&1 &
-        spinner $! "Removing existing ADAS environment"
+        run_conda_command "conda env remove -n ADAS -y" "Removing existing ADAS environment"
         
         echo_status "info" "Creating fresh ADAS environment..."
-        conda create -n ADAS python=3.8 -y > /dev/null 2>&1 &
-        spinner $! "Creating ADAS environment"
+        run_conda_command "conda create -n ADAS python=3.8 -y" "Creating ADAS environment"
     else
         echo_status "info" "Using existing ADAS environment."
     fi
 else
     # Create environment
     echo_status "info" "Creating conda environment 'ADAS'..."
-    conda create -n ADAS python=3.8 -y > /dev/null 2>&1 &
-    spinner $! "Creating ADAS environment"
+    run_conda_command "conda create -n ADAS python=3.8 -y" "Creating ADAS environment"
 fi
 
 # Activate the environment
 echo_status "info" "Activating ADAS environment..."
-conda activate ADAS || { echo_status "error" "Failed to activate ADAS environment."; exit 1; }
-echo_status "success" "ADAS environment activated."
+if [ "$USER" = "root" ]; then
+    # For sudo sessions, we'll use a slightly different approach
+    source "$MINICONDA_PATH/etc/profile.d/conda.sh" 2>/dev/null
+    conda activate ADAS 2>/dev/null || { 
+        echo_status "warning" "Cannot fully activate ADAS environment as root user."
+        echo_status "warning" "Will continue installation but some steps may need manual intervention later."
+    }
+else
+    conda activate ADAS || { 
+        echo_status "warning" "Failed to activate with conda activate. Trying alternative method..."
+        source activate ADAS || {
+            echo_status "error" "Failed to activate ADAS environment. Script will continue but may have issues."
+        }
+    }
+fi
+echo_status "success" "ADAS environment prepared."
 
-# Install required packages
+# Install required packages - use run_conda_command
 echo_status "step" "Installing required packages"
 
 echo_status "info" "Installing conda packages..."
-conda install -c conda-forge libstdcxx-ng -y > /dev/null 2>&1 &
-spinner $! "Installing conda packages"
+run_conda_command "conda activate ADAS && conda install -c conda-forge libstdcxx-ng -y" "Installing conda packages"
 
 echo_status "info" "Installing pip packages..."
-pip install future numpy pygame matplotlib open3d Pillow > /dev/null 2>&1 &
-spinner $! "Installing pip packages"
+run_conda_command "conda activate ADAS && pip install future numpy pygame matplotlib open3d Pillow" "Installing pip packages"
 
 # Install system dependencies
 echo_status "step" "Installing system dependencies"
@@ -382,26 +364,46 @@ if [ "$INSTALL_CARLA" = true ]; then
     spinner $! "Extracting additional maps"
     
     echo_status "info" "Cleaning up downloaded archives..."
-    rm CARLA_Latest.tar.gz AdditionalMaps_Latest.tar.gz
+    rm -f CARLA_Latest.tar.gz AdditionalMaps_Latest.tar.gz
     
     echo_status "success" "CARLA extraction complete."
+    
+    # Ensure proper permissions if running as root
+    if [ "$USER" = "root" ]; then
+        echo_status "info" "Setting proper permissions for CARLA directory..."
+        chown -R $REAL_USER:$REAL_USER carla
+    fi
 fi
 
 # Check if CARLA Python API is already installed
 echo_status "step" "Installing CARLA Python API"
 
-if pip list | grep -q "carla"; then
+# Need to run pip list through the run_conda_command function
+CARLA_ALREADY_INSTALLED=false
+if [ "$USER" = "root" ]; then
+    if su - $REAL_USER -c "source $MINICONDA_PATH/etc/profile.d/conda.sh && conda activate ADAS && pip list | grep -q carla"; then
+        CARLA_ALREADY_INSTALLED=true
+    fi
+else
+    if pip list | grep -q "carla"; then
+        CARLA_ALREADY_INSTALLED=true
+    fi
+fi
+
+if [ "$CARLA_ALREADY_INSTALLED" = true ]; then
     echo_status "info" "CARLA Python API already installed."
     if confirm "Would you like to reinstall the CARLA Python API?" "n"; then
         echo_status "info" "Reinstalling CARLA Python API..."
-        pip install  carla/PythonAPI/carla/dist/carla-0.9.15-cp38-cp38-linux_x86_64.whl > /dev/null 2>&1 &
-        spinner $! "Reinstalling CARLA Python API"
+        run_conda_command "conda activate ADAS && pip install $(pwd)/carla/PythonAPI/carla/dist/carla-0.9.15-cp38-cp38-linux_x86_64.whl" "Reinstalling CARLA Python API"
     fi
 else
-    # Install CARLA Python API
-    echo_status "info" "Installing CARLA Python API..."
-    pip install carla/PythonAPI/carla/dist/carla-0.9.15-cp38-cp38-linux_x86_64.whl > /dev/null 2>&1 &
-    spinner $! "Installing CARLA Python API"
+    # Install CARLA Python API - only if carla directory exists
+    if [ -d "carla" ] && [ -f "carla/PythonAPI/carla/dist/carla-0.9.15-cp38-cp38-linux_x86_64.whl" ]; then
+        echo_status "info" "Installing CARLA Python API..."
+        run_conda_command "conda activate ADAS && pip install $(pwd)/carla/PythonAPI/carla/dist/carla-0.9.15-cp38-cp38-linux_x86_64.whl" "Installing CARLA Python API"
+    else
+        echo_status "error" "CARLA Python wheel not found. Cannot install Python API."
+    fi
 fi
 
 # Final message
@@ -421,5 +423,9 @@ divider
 # Ask if user wants to start CARLA now
 if confirm "Would you like to start CARLA now?" "n"; then
     echo_status "info" "Starting CARLA..."
-    cd carla && ./CarlaUE4.sh
+    if [ "$USER" = "root" ]; then
+        su - $REAL_USER -c "cd $(pwd)/carla && ./CarlaUE4.sh"
+    else
+        cd carla && ./CarlaUE4.sh
+    fi
 fi
