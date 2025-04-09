@@ -359,14 +359,17 @@ if [ "$INSTALL_CARLA" = true ]; then
     tar -xzf CARLA_Latest.tar.gz -C carla > /dev/null 2>&1 &
     spinner $! "Extracting CARLA files"
     
-    echo_status "info" "Extracting additional maps..."
-    tar -xzf AdditionalMaps_Latest.tar.gz -C carla > /dev/null 2>&1 &
-    spinner $! "Extracting additional maps"
+    echo_status "info" "Moving additional maps to CARLA Import directory..."
+    mv AdditionalMaps_Latest.tar.gz carla/Import/
+    
+    echo_status "info" "Importing additional maps using ImportAssets.sh..."
+    (cd carla && ./ImportAssets.sh) > /dev/null 2>&1 &
+    spinner $! "Importing additional maps"
     
     echo_status "info" "Cleaning up downloaded archives..."
-    rm -f CARLA_Latest.tar.gz AdditionalMaps_Latest.tar.gz
+    rm -f CARLA_Latest.tar.gz
     
-    echo_status "success" "CARLA extraction complete."
+    echo_status "success" "CARLA extraction and map import complete."
     
     # Ensure proper permissions if running as root
     if [ "$USER" = "root" ]; then
