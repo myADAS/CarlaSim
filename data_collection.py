@@ -155,121 +155,90 @@ import cv2
 # ==============================================================================
 
 def get_lane_metrics(vehicle, world):
-    """Calculate all 13 affordances for autonomous driving"""
+    """Calculate lane metrics matching record.py implementation"""
     # Get vehicle's current waypoint
-    location = vehicle.get_location()
-    waypoint = world.get_map().get_waypoint(location, project_to_road=True)
+    vehicle_transform = vehicle.get_transform()
+    vehicle_location = vehicle_transform.location
+    waypoint = world.get_map().get_waypoint(vehicle_location, project_to_road=True)
     
-    # Initialize metrics dictionary
-    metrics = {
-        'angle': 0.0,              # Angle to lane center line
-        'dist_to_center': -1,      # Distance to lane center
-        'dist_to_left': -1,        # Distance to left marking
-        'dist_to_right': -1,       # Distance to right marking
-        'dist_to_left_veh': -1,    # Distance to vehicle in left lane
-        'dist_to_right_veh': -1,   # Distance to vehicle in right lane
-        'dist_to_preceding': -1,   # Distance to vehicle ahead
-        'dist_to_following': -1,   # Distance to vehicle behind
-        'dist_to_left_preceding': -1,  # Distance to vehicle ahead in left lane
-        'dist_to_left_following': -1,  # Distance to vehicle behind in left lane
-        'dist_to_right_preceding': -1, # Distance to vehicle ahead in right lane
-        'dist_to_right_following': -1, # Distance to vehicle behind in right lane
-        'speed': 0.0               # Current vehicle speed in km/h
+    # Initialize info dictionary matching record.py structure
+    info = {
+        'angle': 0.0,
+        'in_lane': {
+            'toMarking_LL': None,
+            'toMarking_ML': None,
+            'toMarking_MR': None,
+            'toMarking_RR': None,
+            'dist_LL': float('inf'),
+            'dist_MM': float('inf'),
+            'dist_RR': float('inf')
+        },
+        'on_marking': {
+            'toMarking_L': None,
+            'toMarking_M': None,
+            'toMarking_R': None,
+            'dist_L': float('inf'),
+            'dist_R': float('inf')
+        }
     }
     
-    # Calculate angle between vehicle heading and road tangent
-    vehicle_transform = vehicle.get_transform()
-    vehicle_forward = vehicle_transform.get_forward_vector()
-    road_tangent = waypoint.transform.get_forward_vector()
+    # Calculate angle between road and vehicle direction
+    road_dir = waypoint.transform.get_forward_vector()
+    vehicle_dir = vehicle_transform.get_forward_vector()
+    dot = road_dir.x * vehicle_dir.x + road_dir.y * vehicle_dir.y
+    cross = road_dir.x * vehicle_dir.y - road_dir.y * vehicle_dir.x
+    info['angle'] = math.degrees(math.atan2(cross, dot))
     
-    # Normalize vectors and compute dot product with safety checks
-    v_norm = math.sqrt(vehicle_forward.dot(vehicle_forward))
-    r_norm = math.sqrt(road_tangent.dot(road_tangent))
-    
-    if v_norm < 1e-6 or r_norm < 1e-6:
-        metrics['angle'] = 0.0
-    else:
-        # Normalize dot product to handle floating point precision
-        cos_angle = vehicle_forward.dot(road_tangent) / (v_norm * r_norm)
-        cos_angle = max(-1.0, min(1.0, cos_angle))  # Clamp to [-1, 1]
-        metrics['angle'] = math.degrees(math.acos(cos_angle))
-    
-    # Calculate distances to lane markings
+    # Get lane width
     lane_width = waypoint.lane_width
-    vehicle_local_pos = waypoint.transform.get_right_vector()
-    local_offset = vehicle_local_pos.dot(location - waypoint.transform.location)
     
-    metrics['dist_to_center'] = abs(local_offset)
-    metrics['dist_to_left'] = abs((lane_width / 2) + local_offset)
-    metrics['dist_to_right'] = abs((lane_width / 2) - local_offset)
+    # Set lane markings distances
+    if waypoint.lane_type == carla.LaneType.Driving:
+        info['in_lane']['toMarking_ML'] = lane_width/2
+        info['in_lane']['toMarking_MR'] = lane_width/2
+        
+        # Get adjacent lanes
+        left_lane = waypoint.get_left_lane()
+        right_lane = waypoint.get_right_lane()
+        
+        if left_lane:
+            info['in_lane']['toMarking_LL'] = lane_width
+        if right_lane:
+            info['in_lane']['toMarking_RR'] = lane_width
     
-    # Get nearby vehicles
-    nearby_vehicles = world.get_actors().filter('vehicle.*')
-    
-    def get_vehicle_distance(other_vehicle, reference_waypoint, check_behind=False):
-        """Calculate distance to another vehicle, optionally checking behind"""
+    # Find distances to other vehicles
+    vehicle_list = world.get_actors().filter('vehicle.*')
+    for other_vehicle in vehicle_list:
         if other_vehicle.id == vehicle.id:
-            return -1
-            
+            continue
+        
         other_location = other_vehicle.get_location()
         other_waypoint = world.get_map().get_waypoint(other_location)
         
-        # Check if vehicle is in the same or target lane
-        if other_waypoint.lane_id != reference_waypoint.lane_id:
-            return -1
+        # Check if vehicle is in front
+        to_other = other_location - vehicle_location
+        forward = vehicle_transform.get_forward_vector()
+        
+        if forward.dot(to_other) > 0:
+            distance = vehicle_location.distance(other_location)
             
-        # Vector from current vehicle to other vehicle
-        to_other = other_location - location
-        forward = reference_waypoint.transform.get_forward_vector()
-        
-        # Project onto lane direction to get longitudinal distance
-        distance = to_other.dot(forward)
-        
-        # Return distance only if it matches the direction we're checking
-        if (check_behind and distance < 0) or (not check_behind and distance > 0):
-            return abs(distance)
-        return -1
+            # Check which lane the other vehicle is in
+            if other_waypoint.lane_id == waypoint.lane_id:
+                info['in_lane']['dist_MM'] = min(info['in_lane']['dist_MM'], distance)
+            elif other_waypoint.lane_id == waypoint.lane_id - 1:  # Left lane
+                info['in_lane']['dist_LL'] = min(info['in_lane']['dist_LL'], distance)
+            elif other_waypoint.lane_id == waypoint.lane_id + 1:  # Right lane
+                info['in_lane']['dist_RR'] = min(info['in_lane']['dist_RR'], distance)
     
-    # Calculate distances to vehicles in current lane
-    metrics['dist_to_preceding'] = min([get_vehicle_distance(v, waypoint) 
-                                      for v in nearby_vehicles if get_vehicle_distance(v, waypoint) > 0] or [-1])
-    metrics['dist_to_following'] = min([get_vehicle_distance(v, waypoint, True) 
-                                      for v in nearby_vehicles if get_vehicle_distance(v, waypoint, True) > 0] or [-1])
+    # Set on-marking measurements
+    if waypoint.lane_type == carla.LaneType.Driving:
+        info['on_marking']['toMarking_L'] = lane_width
+        info['on_marking']['toMarking_M'] = lane_width/2
+        info['on_marking']['toMarking_R'] = lane_width
+        info['on_marking']['dist_L'] = info['in_lane']['dist_LL']
+        info['on_marking']['dist_R'] = info['in_lane']['dist_RR']
     
-    # Get left and right lanes
-    left_lane = waypoint.get_left_lane()
-    right_lane = waypoint.get_right_lane()
-    
-    # Calculate distances to vehicles in adjacent lanes
-    if left_lane:
-        metrics['dist_to_left_preceding'] = min([get_vehicle_distance(v, left_lane)
-                                               for v in nearby_vehicles if get_vehicle_distance(v, left_lane) > 0] or [-1])
-        metrics['dist_to_left_following'] = min([get_vehicle_distance(v, left_lane, True)
-                                               for v in nearby_vehicles if get_vehicle_distance(v, left_lane, True) > 0] or [-1])
-        metrics['dist_to_left_veh'] = min(
-            metrics['dist_to_left_preceding'],
-            metrics['dist_to_left_following'] if metrics['dist_to_left_following'] > 0 else float('inf')
-        )
-        if metrics['dist_to_left_veh'] == float('inf'):
-            metrics['dist_to_left_veh'] = -1
-    
-    if right_lane:
-        metrics['dist_to_right_preceding'] = min([get_vehicle_distance(v, right_lane)
-                                                for v in nearby_vehicles if get_vehicle_distance(v, right_lane) > 0] or [-1])
-        metrics['dist_to_right_following'] = min([get_vehicle_distance(v, right_lane, True)
-                                                for v in nearby_vehicles if get_vehicle_distance(v, right_lane, True) > 0] or [-1])
-        metrics['dist_to_right_veh'] = min(
-            metrics['dist_to_right_preceding'],
-            metrics['dist_to_right_following'] if metrics['dist_to_right_following'] > 0 else float('inf')
-        )
-        if metrics['dist_to_right_veh'] == float('inf'):
-            metrics['dist_to_right_veh'] = -1
-    
-    # Calculate current speed in km/h
-    velocity = vehicle.get_velocity()
-    metrics['speed'] = 3.6 * math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
-    
-    return metrics
+    return info
 
 def find_weather_presets():
     rgx = re.compile('.+?(?:(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|$)')
@@ -1725,31 +1694,16 @@ class CameraManager(object):
             
             # Write header matching record.py format
             self.csv_writer.writerow([
-                'frame', 'time', 
-                # Vehicle state
-                'x', 'y', 'z',
-                'pitch', 'yaw', 'roll',
-                'vx', 'vy', 'vz',
-                'ax', 'ay', 'az',
-                'acc_x', 'acc_y', 'acc_z',
-                'throttle', 'steer', 'brake', 'handbrake', 'reverse',
-                'gear', 'rpm', 'speed',
-                # Lane metrics
-                'angle',
-                'dist_c',
-                'dist_l',
-                'dist_r',
-                'veh_l',
-                'veh_r',
-                'veh_f',
-                'veh_b',
-                'veh_lf',
-                'veh_lb',
-                'veh_rf',
-                'veh_rb',
-                'v_speed',
-                # Environment
-                'weather', 'map', 'cam', 'img'
+                'frame', 'timestamp',
+                'location_x', 'location_y', 'location_z',
+                'rotation_pitch', 'rotation_yaw', 'rotation_roll',
+                'velocity_x', 'velocity_y', 'velocity_z',
+                'road_angle',
+                'toMarking_LL', 'toMarking_ML', 'toMarking_MR', 'toMarking_RR',
+                'dist_LL', 'dist_MM', 'dist_RR',
+                'toMarking_L', 'toMarking_M', 'toMarking_R',
+                'dist_L', 'dist_R',
+                'image_path'
             ])
         else:
             # Close CSV file if it's open
@@ -1809,51 +1763,36 @@ class CameraManager(object):
                 world = vehicle.get_world()
                 transform = vehicle.get_transform()
                 velocity = vehicle.get_velocity()
-                angular_velocity = vehicle.get_angular_velocity()
-                acceleration = vehicle.get_acceleration()
-                control = vehicle.get_control()
                 
-                # Get affordance metrics
+                # Get lane metrics using the updated function
                 metrics = get_lane_metrics(vehicle, world)
                 
-                # Write metadata to CSV
+                # Write metadata to CSV matching record.py format
                 if self.csv_writer:
                     self.frame_count += 1
                     
-                    # Get RPM safely
-                    try:
-                        rpm = vehicle.get_vehicle_rpm()
-                    except:
-                        rpm = 0.0
-                        
                     metadata = [
                         self.frame_count, image.timestamp,
-                        # Vehicle state
+                        # Location
                         transform.location.x, transform.location.y, transform.location.z,
+                        # Rotation
                         transform.rotation.pitch, transform.rotation.yaw, transform.rotation.roll,
+                        # Velocity
                         velocity.x, velocity.y, velocity.z,
-                        angular_velocity.x, angular_velocity.y, angular_velocity.z,
-                        acceleration.x, acceleration.y, acceleration.z,
-                        control.throttle, control.steer, control.brake, control.hand_brake, control.reverse,
-                        control.gear, rpm, 3.6 * math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2),
-                        # Lane metrics
+                        # Road angle
                         metrics['angle'],
-                        metrics['dist_to_center'],
-                        metrics['dist_to_left'],
-                        metrics['dist_to_right'],
-                        metrics['dist_to_left_veh'],
-                        metrics['dist_to_right_veh'],
-                        metrics['dist_to_preceding'],
-                        metrics['dist_to_following'],
-                        metrics['dist_to_left_preceding'],
-                        metrics['dist_to_left_following'],
-                        metrics['dist_to_right_preceding'],
-                        metrics['dist_to_right_following'],
-                        metrics['speed'],
-                        # Environment info
-                        world.get_weather(),
-                        world.get_map().name,
-                        self.sensor.get_transform(),
+                        # Lane marking distances
+                        metrics['in_lane']['toMarking_LL'], metrics['in_lane']['toMarking_ML'],
+                        metrics['in_lane']['toMarking_MR'], metrics['in_lane']['toMarking_RR'],
+                        # Lane distances
+                        metrics['in_lane']['dist_LL'], metrics['in_lane']['dist_MM'],
+                        metrics['in_lane']['dist_RR'],
+                        # Adjacent lane markings
+                        metrics['on_marking']['toMarking_L'], metrics['on_marking']['toMarking_M'],
+                        metrics['on_marking']['toMarking_R'],
+                        # Adjacent lane distances
+                        metrics['on_marking']['dist_L'], metrics['on_marking']['dist_R'],
+                        # Image path
                         filename
                     ]
                     
